@@ -1,0 +1,10 @@
+__pycache__
+*.pth
+
+
+env
+checkpoints
+wandb
+outputs/*
+slurm_logs
+
