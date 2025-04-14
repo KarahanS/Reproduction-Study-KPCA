@@ -6,9 +6,8 @@ Code for "A Reproduction Study: The Kernel PCA Interpretation of Self-Attention 
 
 ### 1) Reconstruction Plots
 
-The code to plot the reconstruction loss is located in the `Reconstruction` folder. You can either use the `run.sh` script to run the code or run the `main_train.py` script directly. The code is adapted from the [KPCA repository](https://github.com/rachtsy/KPCA_code).
+The code to plot the reconstruction loss is located in the `Reconstruction` folder. You can either use the `run.sh` script to run the code or run the `main_train.py` script directly. The code is adapted from the original [KPCA repository](https://github.com/rachtsy/KPCA_code).
 Important arguments:
-- `--dataset`: The dataset to use. Options are `mnist`, `fashion`, `cifar10`, `cifar100`, and `svhn`. Default is `mnist`.
 - `--model`: The vision transformer model to use (for example `deit_tiny_patch16_224`)
 - `--data-path`: The path to the dataset (such as `/weka/datasets/ImageNet2012`). There should be subfolders `train` and `val` with the images in them. Alternatively, you can modify the necessary parts in `datasets.py` to make it compatible with your setup. 
 - `--output_dir`: The path to the output directory where the model checkpoints and logs will be saved. Default is `checkpoints`.
