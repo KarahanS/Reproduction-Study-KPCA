@@ -4,7 +4,7 @@ Code for "A Reproduction Study: The Kernel PCA Interpretation of Self-Attention 
 
 ### Ideal dataset format:
 The code is designed to work with the ImageNet dataset. The dataset should be organized in the following way:
-```
+```bash
 ├── ImageNet
 │   ├── train
 │   │   ├── n01440764
