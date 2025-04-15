@@ -25,7 +25,7 @@ The code is designed to work with the ImageNet dataset. The dataset should be or
 │   │   └── ... (more class folders)
 ```
 
-### 1) Reconstruction Plots
+### 1) Reconstruction Loss (Training)
 
 The code to plot the reconstruction loss is located in the `Reconstruction` folder. You can either use the `run.sh` script to run the code or run the `main_train.py` script directly. The code is adapted from the original [KPCA repository](https://github.com/rachtsy/KPCA_code).
 Important arguments:
@@ -68,7 +68,7 @@ To reproduce the $|\gamma_i - \gamma_j|$ plot from our paper, run the `gamma.py`
 ### 5) Value Vectors Convergence Analysis
 To analyze convergence between self-attention learned value vectors and KPCA-derived theoretical values, use the `value_vectors.py` script. Configure different models in `config.yaml` to compare results across architectures. This generates statistical measures of alignment between empirical and theoretical feature representations.
 
-### 6) Reconstruction Plot
+### 6) Reconstruction Plots
 You can use `reconstruction.py` to generate the reconstruction plots with train/test error and individual norm values. Results of our experiments are stored as `csv` files in the `wandb_data` folder. The script will automatically load the data from the `wandb_data` folder and plot the results.
 
 You can use `reconstruction_relative.py` to visualize the relative average absolute error (as in Appendix B). This script will also load the data from the `wandb_data` folder and plot the results, similar to the script above.
