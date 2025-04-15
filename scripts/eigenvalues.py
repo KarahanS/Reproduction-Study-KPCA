@@ -13,7 +13,9 @@ import os
 from torchvision import transforms
 from glob import glob
 from PIL import Image
-
+import yaml
+from torchvision.datasets.folder import ImageFolder, default_loader
+import random
 
 SUPPORTED_MODELS = [
     # ViT models
@@ -30,8 +32,32 @@ SUPPORTED_MODELS = [
     "deit_base_distilled_patch16_224",
 ]
 
-image_dir = "C:\\Users\\karab\\Desktop\\imnet_sample"
-os.makedirs(image_dir, exist_ok=True)
+# set random seed
+def set_random_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU.
+    np.random.seed(seed)
+    random.seed(seed)
+    cudnn.deterministic = True
+    cudnn.benchmark = False
+
+
+# Function to load config from YAML file
+def load_config(config_path="config.yaml"):
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
+
+# Load configuration
+config = load_config()
+image_dir = config.get('dataset_path')
+num_samples = 25
+standardize = config.get('standardize', True)
+seed = config.get('seed', random.randint(0, 10000)) # Default to random seed if not specified
+set_random_seed(seed)
+
+# Modified: Define the transform
 transform = transforms.Compose(
     [
         transforms.Resize((224, 224)),
@@ -39,10 +65,36 @@ transform = transforms.Compose(
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ]
 )
-image_paths = sorted(glob(f"{image_dir}/*.JPEG"))
-images = [transform(Image.open(p).convert("RGB")) for p in image_paths]
-input_tensor = torch.stack(images)  # Shape: [B, 3, 224, 224]
 
+# Modified: Use validation folder for testing
+val_dir = os.path.join(image_dir, 'val')
+if not os.path.exists(val_dir):
+    print(f"Warning: Validation directory {val_dir} not found. Using main directory.")
+    val_dir = image_dir
+
+# Modified: Use ImageFolder to load the data properly
+dataset = ImageFolder(val_dir, transform=transform)
+
+# Modified: Sample the dataset
+indices = list(range(len(dataset)))
+if len(indices) > num_samples:
+    indices = random.sample(indices, num_samples)
+else:
+    print(f"Warning: Requested {num_samples} samples but only found {len(indices)} images.")
+
+# Modified: Create dataloader with the sampled indices
+sampler = torch.utils.data.sampler.SubsetRandomSampler(indices)
+loader = torch.utils.data.DataLoader(dataset, batch_size=num_samples, sampler=sampler)
+
+# Get a batch of images
+for images, _ in loader:
+    input_tensor = images  # Shape: [B, 3, 224, 224]
+    break  # Just need one batch
+
+if standardize:
+    print("Calculating the eigenvalues with key standardization.")
+else:
+    print("Calculating the eigenvalues without key standardization.")
 
 for model_name in SUPPORTED_MODELS:
     print(f"\n===== Results for {model_name} =====")
@@ -133,12 +185,10 @@ for model_name in SUPPORTED_MODELS:
                     2
                 ]  # number of tokens (e.g., 197 for ViT with 16x16 patches)
 
-                q_bh = (q_bh - q_bh.mean(dim=-1, keepdim=True)) / (
-                    q_bh.std(dim=-1, keepdim=True) + 1e-8
-                )
-                k_bh = (k_bh - k_bh.mean(dim=-1, keepdim=True)) / (
-                    k_bh.std(dim=-1, keepdim=True) + 1e-8
-                )
+                if(standardize): 
+                    k_bh = (k_bh - k_bh.mean(dim=-1, keepdim=True)) / (
+                        k_bh.std(dim=-1, keepdim=True) + 1e-8
+                    )
 
                 K_raw = torch.exp(
                     k_bh
@@ -152,17 +202,18 @@ for model_name in SUPPORTED_MODELS:
                 K_centered = (
                     K_phi - one_N @ K_phi - K_phi @ one_N + one_N @ K_phi @ one_N
                 )
-
+                
                 eigvals, eigvecs = torch.linalg.eigh(K_centered)
                 sorted_indices = torch.argsort(eigvals, descending=True)
                 eigvals = eigvals[sorted_indices]
                 eigvecs = eigvecs[:, sorted_indices]
 
-                # make sure we calculated the eigenvalues, eigenvectors correctly
-                assert torch.allclose(
-                    eigvecs * eigvals, K_centered @ eigvecs
-                ), "Eigenvalue equation not satisfied in general"
-
+                if (standardize):
+                    assert torch.allclose(
+                        eigvecs * eigvals, K_centered @ eigvecs
+                    ), "Eigenvalue equation not satisfied in general"
+                # there is no guarantee for this if not standardized
+                
                 # Get absolute eigenvalues and keep top head_dim
                 eigvals_abs = eigvals.abs()[:head_dim]
 

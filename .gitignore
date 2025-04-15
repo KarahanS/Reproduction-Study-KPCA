@@ -178,3 +178,7 @@ wandb
 outputs/*
 slurm_logs
 
+# output folders
+gamma_outputs
+norm_outputs
+value_vectors_outputs

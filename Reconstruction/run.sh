@@ -17,9 +17,9 @@ ls $WORK
 
 # Setup Phase
 echo "Setting up environment..."
-cd /home/vernade/vns988/attention_svd/KPCA 
-source /home/vernade/vns988/attention_svd/KPCA/env/bin/activate 
-cd /home/vernade/vns988/attention_svd/KPCA/RPCA/Reconstruction
+cd /home/vernade/vns988/attention_svd/KPCA  # cd into your working space
+source /home/vernade/vns988/attention_svd/KPCA/env/bin/activate  # activate your virtual environment
+cd /home/vernade/vns988/attention_svd/KPCA/RPCA/Reconstruction # cd into the "Reconstruction" folder
 
 # Display Python and environment info for debugging
 which python

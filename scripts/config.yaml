@@ -1,0 +1,12 @@
+
+# Dataset configuration for all scripts
+dataset_path: "/weka/datasets/ImageNet2012"  # Update this with your actual dataset path and validation subfolder
+seed: 0
+
+# eigenvalues.py
+standardize: False # standardize keys and queries before the calculation to ensure numerical stability
+
+# gamma.py
+random: True # test eigenvalues for a random matrix constructed by perturbing the original A matrix
+model: "vit_base_patch16_224" # also used by value_vectors.py
+block_idx: 2 # layer used by gamma.py

@@ -6,6 +6,12 @@ import seaborn as sns
 from tqdm import tqdm
 from tueplots import bundles
 import matplotlib.pyplot as plt
+import yaml
+from torchvision import datasets, transforms
+import os
+import random
+import torch
+import torch.backends.cudnn as cudnn
 
 bundles.icml2024()
 plt.rcParams.update({"xtick.labelsize": 38})
@@ -45,7 +51,22 @@ short_names = {
     "deit_base_distilled_patch16_224": "DeiT-Base-D",
     "deit_tiny_patch16_224": "DeiT-Tiny",
 }
+# set random seed
+def set_random_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU.
+    np.random.seed(seed)
+    random.seed(seed)
+    cudnn.deterministic = True
+    cudnn.benchmark = False
 
+
+# Function to load config from YAML file
+def load_config(config_path="config.yaml"):
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
 
 def analyze_model(model_name):
     print(f"Analyzing model: {model_name}")
@@ -54,12 +75,49 @@ def analyze_model(model_name):
     model = timm.create_model(model_name, pretrained=True)
     model.eval()
 
-    # Create a dummy input tensor
-    # Note: All models in the list expect 224x224 images
-    batch_size = 5
-    input_tensor = torch.randn(batch_size, 3, 224, 224)
-    img_path = "imnet_sample/ILSVRC2012_val_00002349.JPEG"
+    # Load configuration
+    config = load_config()
+    image_dir = config.get('dataset_path')
+    seed = config.get('seed', random.randint(0, 10000))  # Default to random seed if not specified
+    set_random_seed(seed)
+    
+    num_samples = 1 # otherwise takes too long
+    
+    # Define the transform
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
 
+    # Use validation folder for testing
+    val_dir = os.path.join(image_dir, 'val')
+    if not os.path.exists(val_dir):
+        print(f"Warning: Validation directory {val_dir} not found. Using main directory.")
+        val_dir = image_dir
+
+    # Use ImageFolder to load the data properly
+    dataset = datasets.ImageFolder(val_dir, transform=transform)
+
+    # Sample the dataset based on num_samples from config
+    indices = list(range(len(dataset)))
+    if len(indices) > num_samples:
+        indices = random.sample(indices, num_samples)
+    else:
+        print(f"Warning: Requested {num_samples} samples but only found {len(indices)} images.")
+        num_samples = len(indices)
+    
+    # Create dataloader with the sampled indices
+    sampler = torch.utils.data.sampler.SubsetRandomSampler(indices)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=num_samples, sampler=sampler)
+
+    # Get the batch of images
+    for input_tensor, _ in loader:
+        print(f"Loaded {input_tensor.shape[0]} images with shape: {input_tensor.shape}")
+        break  # Just need one batch
+    
+    batch_size = input_tensor.shape[0]
+    
     # Global list to store attention-weighted values
     attention_outputs = []
 
@@ -260,7 +318,7 @@ def plot_layer_statistics(
         h_data = h_norms[layer_idx].flatten()
 
         # Remove outliers if requested
-        if remove_outliers:
+        if remove_outliers and len(phi_data) > 0:
             phi_threshold = np.percentile(phi_data, outlier_threshold)
             phi_data = phi_data[phi_data <= phi_threshold]
 
@@ -284,42 +342,6 @@ def plot_layer_statistics(
             h_stds[layer_idx] = np.std(h_data)
 
     # COMBINED PLOTS (REGULAR SCALE) - Both norms on same plot
-    """
-    plt.figure(figsize=(15, 7))
-    
-    if use_percentiles:
-        # Phi norm (blue)
-        plt.fill_between(layers, phi_lower, phi_upper, alpha=0.2, color='blue', label=r'$\left| \varphi(q_i) \right|^2$ Quartiles')
-        plt.plot(layers, phi_centers, marker='o', linestyle='-', color='blue', label=r'$\left| \varphi(q_i) \right|^2$ Median')
-        
-        # H norm (red) - Fixed the LaTeX notation here
-        plt.fill_between(layers, h_lower, h_upper, alpha=0.2, color='red', label=r'$\left| \mathbf{h}_i \right|^2$ Quartiles')
-        plt.plot(layers, h_centers, marker='s', linestyle='-', color='red', label=r'$\left| \mathbf{h}_i \right|^2$ Median')
-    
-        plt.ylabel('Norm Squared Value (median)')
-    else:
-        # Phi norm (blue)
-        plt.errorbar(layers, phi_means, yerr=phi_stds, marker='o', linestyle='-', capsize=5, 
-                     color='blue', label=r'$\left| \varphi(q_i) \right|^2$ Mean ± Std')
-        
-        # H norm (red) - Fixed the LaTeX notation here
-        plt.errorbar(layers, h_means, yerr=h_stds, marker='s', linestyle='-', capsize=5, 
-                     color='red', label=r'$\left| \mathbf{h}_i \right|^2$ Mean ± Std')
-        
-        plt.ylabel('Norm Squared Value (mean)')
-    
-    plt.xlabel('Layer Index')
-    plt.grid(True, alpha=0.3)
-    plt.legend(loc='best')
-    
-    stats_type = "percentiles" if use_percentiles else "mean/std"
-    outlier_info = f"outliers removed (${outlier_threshold}\%$)" if remove_outliers else "with outliers"
-    
-    plt.tight_layout()
-    plt.savefig(f"appendix_a2/{model_name}_combined_stats.pdf")
-    plt.show()
-    """
-
     plt.figure(figsize=(18, 9))
 
     # Add title
@@ -395,7 +417,7 @@ def plot_layer_statistics(
     plt.xticks(np.arange(0, no_layers, 1))  # Show every layer number
 
     plt.tight_layout()
-    plt.savefig(f"appendix_a2/{model_name}_combined_stats_log.pdf")
+    plt.savefig(f"norm_outputs/{model_name}_combined_stats_log.pdf")
     plt.show()
 
     # Return the statistics for combined plots
@@ -422,171 +444,6 @@ def plot_layer_statistics(
             "stats_type": "mean/std",
         }
 
-
-# Also fix the plot_all_models_combined function
-def plot_all_models_combined(all_model_stats, use_log_scale=False):
-    """
-    Plot statistics from all models in one combined plot
-
-    Parameters:
-    - all_model_stats: List of dictionaries containing model statistics
-    - use_log_scale: Whether to use log scale for y-axis
-    """
-    plt.figure(figsize=(18, 9))
-    # plt.title("Comparison of Squared Norms over Layers", fontsize=30)
-
-    # Define a color cycle
-    colors = plt.cm.tab10.colors
-
-    for i, stats in enumerate(all_model_stats):
-        model_name = stats["model_name"]
-        layers = stats["layers"]
-        color = colors[i % len(colors)]
-
-        # Shortened model name for legend
-        short_name = short_names.get(model_name, model_name)
-
-        if stats["stats_type"] == "percentiles":
-            # Plot phi norm with solid line
-            plt.plot(
-                layers,
-                stats["phi_centers"],
-                marker="o",
-                linestyle="-",
-                color=color,
-                label=f"{short_name} - $\\left|| \\varphi(q_i) \\right||^2$",
-            )
-
-            # Plot h norm with dashed line - Fixed the LaTeX notation here
-            plt.plot(
-                layers,
-                stats["h_centers"],
-                marker="s",
-                linestyle="--",
-                color=color,
-                label=f"{short_name} - $\\left|| \\mathbf{{h}}_i \\right||^2$",
-            )
-        else:
-            # Plot phi norm with solid line
-            plt.plot(
-                layers,
-                stats["phi_means"],
-                marker="o",
-                linestyle="-",
-                color=color,
-                label=f"{short_name} - $\\left|| \\varphi(q_i) \\right||^2$",
-            )
-
-            # Plot h norm with dashed line - Fixed the LaTeX notation here
-            plt.plot(
-                layers,
-                stats["h_means"],
-                marker="s",
-                linestyle="--",
-                color=color,
-                label=f"{short_name} - $\\left|| \\mathbf{{h}}_i \\right||^2$",
-            )
-
-    # Set plot title and labels
-    scale_type = "Log Scale" if use_log_scale else "Linear Scale"
-    stats_type = all_model_stats[0]["stats_type"]
-    measure = "Median" if stats_type == "percentiles" else "Mean"
-    plt.xlabel("Layer Index (Normalized)")
-    # lt.ylabel(f'Norm Squared Value ({measure})')
-
-    if use_log_scale:
-        plt.yscale("log")
-
-    plt.grid(True, alpha=0.3)
-    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
-    max_layers = max([len(stats["layers"]) for stats in all_model_stats])
-
-    # Set x-ticks to show every layer number (1 by 1)
-    plt.xticks(np.arange(0, max_layers, 1))
-
-    plt.tight_layout()
-    plt.savefig(f"appendix_a2/all_models_combined{'_log' if use_log_scale else ''}.pdf")
-    plt.show()
-    """
-    Plot statistics from all models in one combined plot
-    
-    Parameters:
-    - all_model_stats: List of dictionaries containing model statistics
-    - use_log_scale: Whether to use log scale for y-axis
-    """
-    plt.figure(figsize=(18, 9))
-
-    # Define a color cycle
-    colors = plt.cm.tab10.colors
-
-    for i, stats in enumerate(all_model_stats):
-        model_name = stats["model_name"]
-        layers = stats["layers"]
-        color = colors[i % len(colors)]
-
-        # Shortened model name for legend
-        short_name = short_names.get(model_name, model_name)
-
-        if stats["stats_type"] == "percentiles":
-            # Plot phi norm with solid line
-            plt.plot(
-                layers,
-                stats["phi_centers"],
-                marker="o",
-                linestyle="-",
-                color=color,
-                label=f"{short_name} - $\\| \\varphi(q_i) \\|^2$",
-            )
-
-            # Plot h norm with dashed line
-            plt.plot(
-                layers,
-                stats["h_centers"],
-                marker="s",
-                linestyle="--",
-                color=color,
-                label=f"{short_name} - $\\|\\h_i \\|^2$",
-            )
-        else:
-            # Plot phi norm with solid line
-            plt.plot(
-                layers,
-                stats["phi_means"],
-                marker="o",
-                linestyle="-",
-                color=color,
-                label=f"{short_name} - $\\| \\varphi(q_i) \\|^2$",
-            )
-
-            # Plot h norm with dashed line
-            plt.plot(
-                layers,
-                stats["h_means"],
-                marker="s",
-                linestyle="--",
-                color=color,
-                label=f"{short_name} - $\\| \\h_i \\|^2$",
-            )
-
-    # Set plot title and labels
-    scale_type = "Log Scale" if use_log_scale else "Linear Scale"
-    stats_type = all_model_stats[0]["stats_type"]
-    measure = "Median" if stats_type == "percentiles" else "Mean"
-
-    plt.xlabel("Layer Index (Normalized)")
-    # plt.ylabel(f'Norm Squared Value ({measure})')
-
-    if use_log_scale:
-        plt.yscale("log")
-
-    plt.grid(True, alpha=0.3)
-    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
-
-    plt.tight_layout()
-    plt.savefig(f"appendix_a2/all_models_combined{'_log' if use_log_scale else ''}.pdf")
-    plt.show()
-
-
 def compute_layer_statistics(model_results):
     """
     Compute detailed statistics for phi and h norms in each layer
@@ -601,6 +458,7 @@ def compute_layer_statistics(model_results):
     phi_norms = model_results["phi_norms"]
     h_norms = model_results["h_norms"]
     no_layers = model_results["no_layers"]
+    batch_size = model_results["batch_size"]
 
     # Arrays to store statistics for each layer
     layer_stats = []
@@ -609,7 +467,7 @@ def compute_layer_statistics(model_results):
     all_phi_values = []
     all_h_values = []
 
-    print(f"\n===== Statistics for {model_name} =====")
+    print(f"\n===== Statistics for {model_name} (Averaged over {batch_size} images) =====")
     print(
         f"{'Layer':<6} | {'Metric':<5} | {'Mean':<15} | {'Median':<15} | {'Min':<15} | {'Max':<15} | {'Ratio (Phi/H)':<15}"
     )
@@ -732,13 +590,14 @@ def compute_relative_errors(model_results):
     phi_norms = model_results["phi_norms"]
     h_norms = model_results["h_norms"]
     no_layers = model_results["no_layers"]
+    batch_size = model_results["batch_size"]
 
     # Arrays to store relative errors
     rel_error_wrt_phi = np.zeros(no_layers)  # |phi - h| / |phi|
     rel_error_wrt_h = np.zeros(no_layers)  # |phi - h| / |h|
     abs_error = np.zeros(no_layers)  # |phi - h|
 
-    print(f"\n===== Relative Errors for {model_name} =====")
+    print(f"\n===== Relative Errors for {model_name} (Averaged over {batch_size} images) =====")
     print(
         f"{'Layer':<6} | {'Abs Error':<15} | {'Rel Error (wrt Phi)':<25} | {'Rel Error (wrt H)':<25}"
     )
@@ -837,7 +696,7 @@ def plot_relative_errors(model_errors, log_scale=True):
 
     plt.tight_layout()
     plt.savefig(
-        f"appendix_a2/{model_name}_relative_errors{'_log' if log_scale else ''}.pdf"
+        f"norm_outputs/{model_name}_relative_errors{'_log' if log_scale else ''}.pdf"
     )
     plt.show()
 
@@ -865,7 +724,7 @@ def plot_relative_errors(model_errors, log_scale=True):
 
     plt.tight_layout()
     plt.savefig(
-        f"appendix_a2/{model_name}_absolute_error{'_log' if log_scale else ''}.pdf"
+        f"norm_outputs/{model_name}_absolute_error{'_log' if log_scale else ''}.pdf"
     )
     plt.show()
 
@@ -878,6 +737,11 @@ def main():
     all_model_detailed_stats = []
     all_model_errors = []
 
+    # create folder "norm_outputs" if it does not exist
+    if not os.path.exists("norm_outputs"):
+        os.makedirs("norm_outputs")
+        
+    
     for model_name in SUPPORTED_MODELS:
         try:
             # Analyze model
@@ -905,6 +769,8 @@ def main():
 
         except Exception as e:
             print(f"Error analyzing model {model_name}: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 if __name__ == "__main__":
