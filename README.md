@@ -49,7 +49,7 @@ python main_train.py \
     --wandb_run_name "RUN_NAME" \
 ```
 
-This will log the reconstruction error for a single batch (selected from the training set) to Wandb. Additionally we are saving the squared norms of the quantities ($\|\varphi(\mathbf{q}_i)\|^2$ and $\|\mathbf{h}_i\|^2$) individually to have a better overview of the behavior of the model. 
+This will log the reconstruction error for a single batch (selected from the training set) to Wandb. Additionally we are saving the squared norms of the query projections and attention outputs individually to have a better overview of the behavior of the model. 
 
 
 ### 2) Eigenvalues Analysis
@@ -67,3 +67,8 @@ To reproduce the $|\gamma_i - \gamma_j|$ plot from our paper, run the `gamma.py`
 
 ### 5) Value Vectors Convergence Analysis
 To analyze convergence between self-attention learned value vectors and KPCA-derived theoretical values, use the `value_vectors.py` script. Configure different models in `config.yaml` to compare results across architectures. This generates statistical measures of alignment between empirical and theoretical feature representations.
+
+### 6) Reconstruction Plot
+You can use `reconstruction.py` to generate the reconstruction plots with train/test error and individual norm values. Results of our experiments are stored as `csv` files in the `wandb_data` folder. The script will automatically load the data from the `wandb_data` folder and plot the results.
+
+You can use `reconstruction_relative.py` to visualize the relative average absolute error (as in Appendix B). This script will also load the data from the `wandb_data` folder and plot the results, similar to the script above.

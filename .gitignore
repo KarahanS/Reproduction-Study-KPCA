@@ -182,3 +182,4 @@ slurm_logs
 gamma_outputs
 norm_outputs
 value_vectors_outputs
+reconstruction_outputs
