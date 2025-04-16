@@ -275,7 +275,7 @@ plt.rc('text', usetex=True)
 plt.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}'
 
 # Set y-label with LaTeX formatting
-plt.ylabel(r'$J_{\text{proj}}$')
+plt.ylabel(r'$J_{\text{proj}}$ and squared norms')
 
 # Add grid
 plt.grid(True, alpha=0.3)

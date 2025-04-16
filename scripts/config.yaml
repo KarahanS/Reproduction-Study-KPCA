@@ -4,7 +4,7 @@ dataset_path: "/weka/datasets/ImageNet2012"  # Update this with your actual data
 seed: 0
 
 # eigenvalues.py
-standardize: False # standardize keys and queries before the calculation to ensure numerical stability
+standardize: True # standardize keys and queries before the calculation to ensure numerical stability
 
 # gamma.py
 random: True # test eigenvalues for a random matrix constructed by perturbing the original A matrix
