@@ -1,287 +1,259 @@
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-import timm
-import seaborn as sns
-from tqdm import tqdm
-from tueplots import bundles
-import matplotlib.pyplot as plt
-import yaml
-from torchvision import datasets, transforms
-import os
-import random
-import torch
+"""
+Requirements:
+  pip install torch transformers datasets matplotlib tqdm seaborn tueplots pyyaml
+"""
+
+import torch, random, os, yaml, math, numpy as np
 import torch.backends.cudnn as cudnn
+from tqdm import tqdm
+from transformers import AutoTokenizer, AutoModel
+import matplotlib.pyplot as plt
+from tueplots import bundles
 
+# ---------------------------------------------------------------------
+# 1. Global setup & plotting style (unchanged)
+# ---------------------------------------------------------------------
 bundles.icml2024()
-plt.rcParams.update({"xtick.labelsize": 38})
-plt.rcParams.update({"axes.labelsize": 20})
-plt.rcParams.update({"ytick.labelsize": 38})
-plt.rcParams.update({"axes.titlesize": 40})
-plt.rcParams.update({"legend.fontsize": 25})
-plt.rcParams.update({"font.size": 18})
-plt.rcParams.update({"legend.title_fontsize": 30})
-plt.rcParams.update({"axes.titlepad": 20})  # Set global title padding
-plt.rcParams["text.usetex"] = True
+plt.rcParams.update({
+    "xtick.labelsize": 38, "ytick.labelsize": 38, "axes.labelsize": 20,
+    "axes.titlesize": 40, "legend.fontsize": 25, "legend.title_fontsize": 30,
+    "font.size": 18, "axes.titlepad": 20, "text.usetex": False  # disable LaTeX for NLP plots
+})
 
+
+""" from attention paper:
+The encoder contains self-attention layers. In a self-attention layer all of the keys, values
+and queries come from the same place, in this case, the output of the previous layer in the
+encoder. Each position in the encoder can attend to all positions in the previous layer of the
+encoder.
+"""
 SUPPORTED_MODELS = [
-    # ViT models
-    "vit_tiny_patch16_224",
-    "vit_small_patch16_224",
-    "vit_base_patch16_224",
-    "vit_large_patch16_224",
-    # DeiT models
-    "deit_tiny_patch16_224",
-    "deit_small_patch16_224",
-    "deit_base_patch16_224",
-    "deit_tiny_distilled_patch16_224",
-    "deit_small_distilled_patch16_224",
-    "deit_base_distilled_patch16_224",
+    # encoder‑only (bidirectional)
+    "bert-base-uncased",
+    "roberta-base",
+    "google/electra-base-discriminator",
+
+    # decoder‑only (causal)
+    "gpt2",
+    "distilgpt2",
+    "EleutherAI/gpt-neo-125m",
 ]
 
-short_names = {
-    "vit_tiny_patch16_224": "ViT-Tiny",
-    "vit_small_patch16_224": "ViT-Small",
-    "vit_base_patch16_224": "ViT-Base",
-    "vit_large_patch16_224": "ViT-Large",
-    "deit_small_patch16_224": "DeiT-Small",
-    "deit_base_patch16_224": "DeiT-Base",
-    "deit_tiny_distilled_patch16_224": "DeiT-Tiny-D",
-    "deit_small_distilled_patch16_224": "DeiT-Small-D",
-    "deit_base_distilled_patch16_224": "DeiT-Base-D",
-    "deit_tiny_patch16_224": "DeiT-Tiny",
+SHORT_NAMES = {
+    "bert-base-uncased":           "BERT‑Base",
+    "roberta-base":                "RoBERTa‑Base",
+    "google/electra-base-discriminator": "ELECTRA‑Base",
+    "gpt2":                        "GPT‑2‑S",
+    "distilgpt2":                  "DistilGPT‑2",
+    "EleutherAI/gpt-neo-125m":     "GPT‑Neo‑125M",
 }
-# set random seed
+
+# ---------------------------------------------------------------------
+# 2. Utilities
+# ---------------------------------------------------------------------
 def set_random_seed(seed):
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU.
+    torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
-    cudnn.deterministic = True
-    cudnn.benchmark = False
+    cudnn.deterministic, cudnn.benchmark = True, False
 
+def load_config(path="config.yaml"):
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return yaml.safe_load(f)
+    return {}
 
-# Function to load config from YAML file
-def load_config(config_path="config.yaml"):
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    return config
+# ---------------------------------------------------------------------
+# 3. Core analysis function
+# ---------------------------------------------------------------------
+def analyze_model_nlp(model_name):
+    import math                                     # ① missing earlier
+    print(f"\n=== Analyzing {model_name} ===")
 
-def analyze_model(model_name):
-    print(f"Analyzing model: {model_name}")
+    # ----------------------------------- load model & tokenizer ------------
+    model = AutoModel.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
 
-    # Create model
-    model = timm.create_model(model_name, pretrained=True)
+    # GPT‑, OPT‑ & friends need an explicit pad token
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     model.eval()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.to(device)
 
-    # Load configuration
-    config = load_config()
-    image_dir = config.get('dataset_path')
-    seed = config.get('seed', random.randint(0, 10000))  # Default to random seed if not specified
+    # ----------------------------------- config ----------------------------
+    cfg        = load_config()
+    seed = cfg.get('seed', random.randint(0, 10000))  # Default to random seed if not specified
+    sentences  = cfg.get("sentences") or [
+        "Transformers are changing natural language processing.",
+        "PyTorch hooks let us peek inside neural networks."
+    ]
     set_random_seed(seed)
-    
-    num_samples = 1 # otherwise takes too long
-    
-    # Define the transform
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ])
 
-    # Use validation folder for testing
-    val_dir = os.path.join(image_dir, 'val')
-    if not os.path.exists(val_dir):
-        print(f"Warning: Validation directory {val_dir} not found. Using main directory.")
-        val_dir = image_dir
+    enc = tokenizer(
+        sentences,
+        padding   = True,
+        truncation= True,
+        max_length= 128,
+        return_tensors="pt"
+    ).to(device)
 
-    # Use ImageFolder to load the data properly
-    dataset = datasets.ImageFolder(val_dir, transform=transform)
+    batch_size = enc["input_ids"].size(0)
 
-    # Sample the dataset based on num_samples from config
-    indices = list(range(len(dataset)))
-    if len(indices) > num_samples:
-        indices = random.sample(indices, num_samples)
-    else:
-        print(f"Warning: Requested {num_samples} samples but only found {len(indices)} images.")
-        num_samples = len(indices)
-    
-    # Create dataloader with the sampled indices
-    sampler = torch.utils.data.sampler.SubsetRandomSampler(indices)
-    loader = torch.utils.data.DataLoader(dataset, batch_size=num_samples, sampler=sampler)
-
-    # Get the batch of images
-    for input_tensor, _ in loader:
-        print(f"Loaded {input_tensor.shape[0]} images with shape: {input_tensor.shape}")
-        break  # Just need one batch
-    
-    batch_size = input_tensor.shape[0]
-    
-    # Global list to store attention-weighted values
+    # ----------------------------------- storage ---------------------------
     attention_outputs = []
 
-    def attn_detailed_hook(module, input, output):
-        x = input[0]
-        B, N, C = x.shape
+    # ----------------------------------- hook ------------------------------
+    def attn_hook(module, inp, out):
+        hidden = inp[0]                       # (B, L, H)
+        B, L, Hdim = hidden.shape
+        
+        print(f"Layer {len(attention_outputs)}: {module.__class__.__name__} ({B}, {L}, {Hdim})")
 
-        # Handle different attribute names based on model type
-        if hasattr(module, "qkv"):
-            # Standard ViT models
-            qkv = module.qkv(x).reshape(
-                B, N, 3, module.num_heads, C // module.num_heads
-            )
-            q, k, v = qkv.permute(2, 0, 3, 1, 4)
-        elif hasattr(module, "q") and hasattr(module, "k") and hasattr(module, "v"):
-            # Some models separate q, k, v projections
-            q = (
-                module.q(x)
-                .reshape(B, N, module.num_heads, C // module.num_heads)
-                .permute(0, 2, 1, 3)
-            )
-            k = (
-                module.k(x)
-                .reshape(B, N, module.num_heads, C // module.num_heads)
-                .permute(0, 2, 1, 3)
-            )
-            v = (
-                module.v(x)
-                .reshape(B, N, module.num_heads, C // module.num_heads)
-                .permute(0, 2, 1, 3)
-            )
+        # -------- identify projections (works for old & new classes) -------
+        if all(hasattr(module, x) for x in ("query", "key", "value")):
+            print("Using query, key, value")
+            q_proj, k_proj, v_proj = module.query, module.key, module.value
+            num_heads = module.num_attention_heads
+            head_dim  = module.attention_head_size
+
+            q = q_proj(hidden)
+            k = k_proj(hidden)
+            v = v_proj(hidden)
+
+        elif all(hasattr(module, x) for x in ("q_proj", "k_proj", "v_proj")):
+            print("Using q_proj, k_proj, v_proj")   
+            q_proj, k_proj, v_proj = module.q_proj, module.k_proj, module.v_proj
+            # Bart/OPT style
+            head_dim  = module.head_dim
+            num_heads = module.num_heads
+
+            q = q_proj(hidden)
+            k = k_proj(hidden)
+            v = v_proj(hidden)
+
+        elif all(hasattr(module, x) for x in ("q_lin", "k_lin", "v_lin")):
+            print("Using q_lin, k_lin, v_lin")
+            q_proj, k_proj, v_proj = module.q_lin, module.k_lin, module.v_lin
+            head_dim  = module.dim // module.n_heads
+            num_heads = module.n_heads
+
+            q = q_proj(hidden)
+            k = k_proj(hidden)
+            v = v_proj(hidden)
+
+        elif hasattr(module, "c_attn"):                     # GPT‑2
+            num_heads = module.num_heads 
+            head_dim  = Hdim // num_heads
+            proj = module.c_attn(hidden).split(Hdim, dim=2) # (q,k,v)
+            q, k, v = proj
+
         else:
-            print(f"Unsupported attention module structure for {model_name}")
+            # Unknown attention variant – skip
             return
 
-        # Use module.scale if available, otherwise calculate it
-        scale = getattr(module, "scale", 1.0 / (C // module.num_heads) ** 0.5)
+        # reshape to (B, heads, L, head_dim)
+        if hasattr(module, "c_attn"):
+            q = q.view(B, L, num_heads, head_dim).transpose(1, 2)
+            k = k.view(B, L, num_heads, head_dim).transpose(1, 2)
+            v = v.view(B, L, num_heads, head_dim).transpose(1, 2)
+        else:
+            q = q.view(B, L, num_heads, head_dim).transpose(1, 2)
+            k = k.view(B, L, num_heads, head_dim).transpose(1, 2)
+            v = v.view(B, L, num_heads, head_dim).transpose(1, 2)
 
-        attn = (q @ k.transpose(-2, -1)) * scale
-        attn = attn.softmax(dim=-1)
+        # -------- scaled‑dot‑product attention -----------------------------
+        scale = 1.0 / math.sqrt(head_dim)
+        attn_scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+        attn_probs  = attn_scores.softmax(dim=-1)
+        o           = torch.matmul(attn_probs, v)
 
-        attention_outputs.append(
-            {
-                "x": x.detach(),
-                "q": q.detach(),
-                "k": k.detach(),
-                "v": v.detach(),
-                "attn": attn.detach(),
-            }
-        )
+        attention_outputs.append({
+            "q":     q.detach().cpu(),
+            "k":     k.detach().cpu(),
+            "v":     v.detach().cpu(),
+            "attn":  attn_probs.detach().cpu(),
+            "o":     o.detach().cpu(),
+        })
+        
+        print("o shape:", o.shape) # (B, heads, L, head_dim)  - L: sequence length
 
-    def remove_all_hooks(model):
-        for module in model.modules():
-            if hasattr(module, "_forward_hooks"):
-                module._forward_hooks.clear()
-            if hasattr(module, "_forward_pre_hooks"):
-                module._forward_pre_hooks.clear()
-            if hasattr(module, "_backward_hooks"):
-                module._backward_hooks.clear()
-
-    # Remove any existing hooks
-    remove_all_hooks(model)
-
-    # Register hooks to all attention blocks
+    # ----------------------------------- register hooks --------------------
     hook_handles = []
+    for name, mod in model.named_modules():
+        # pick *any* module that looks like self‑attention
+        if any(hasattr(mod, attr) for attr in
+               ("query", "q_proj", "q_lin", "c_attn")):
+            # check if not decoder
+            if "decoder" in name:
+                continue # skip decoder modules
 
-    # Find attention blocks based on model architecture
-    if "vit" in model_name or "deit" in model_name:
-        # For ViT and DeiT models
-        if hasattr(model, "blocks"):
-            for blk in model.blocks:
-                if hasattr(blk, "attn"):
-                    handle = blk.attn.register_forward_hook(attn_detailed_hook)
-                    hook_handles.append(handle)
-    else:
-        print(f"Unknown model architecture for {model_name}")
-        return None
-
-    # Forward pass
+            hook_handles.append(mod.register_forward_hook(attn_hook))
+    # ----------------------------------- forward pass ----------------------
     with torch.no_grad():
-        output = model(input_tensor)
+        model(**enc)
 
-    # Get number of layers
-    no_layers = len(attention_outputs)
-    if no_layers == 0:
-        print(f"No attention outputs captured for {model_name}")
+    for h in hook_handles:
+        h.remove()
+        
+    print(f"→ removed {len(hook_handles)} attention hooks")
+
+    if not attention_outputs:
+        print("⚠️  No attention captured – model layout unknown.")
         return None
 
-    print(f"Captured {no_layers} attention layers")
+    # ----------------------------------- norms -----------------------------
+    n_layers = len(attention_outputs)
+    n_heads  = attention_outputs[0]["q"].shape[1]
+    n_tokens = attention_outputs[0]["q"].shape[2]
 
-    # Get shape information from the first layer
-    first_layer = attention_outputs[0]
-    num_heads = first_layer["q"].shape[1]
-    num_tokens = first_layer["q"].shape[2]
 
-    print(f"Batch size: {batch_size}, Num heads: {num_heads}, Num tokens: {num_tokens}")
+    phi_norms = np.zeros((n_layers, batch_size, n_heads, n_tokens))
+    h_norms   = np.zeros((n_layers, batch_size, n_heads, n_tokens))
 
-    # Data structures to store results
-    phi_norms = np.zeros((no_layers, batch_size, num_heads, num_tokens))
-    h_norms = np.zeros((no_layers, batch_size, num_heads, num_tokens))
+    for l in range(n_layers):
+        q = attention_outputs[l]["q"].numpy()
+        k = attention_outputs[l]["k"].numpy()
+        v = attention_outputs[l]["v"].numpy()
+        attn = attention_outputs[l]["attn"].numpy()
+        o = attention_outputs[l]["o"].numpy()
+        # (B, heads, L, head_dim)  - L: sequence length
 
-    # Loop through layers, heads, tokens, and batch items
-    for layer_idx in range(no_layers):
-        x, q, k, v, attn_matr = (
-            attention_outputs[layer_idx]["x"],
-            attention_outputs[layer_idx]["q"],
-            attention_outputs[layer_idx]["k"],
-            attention_outputs[layer_idx]["v"],
-            attention_outputs[layer_idx]["attn"],
-        )
 
-        for h in range(num_heads):
-            for i in range(num_tokens):
-                for b in range(batch_size):
-                    # standardize q and k to have mean 0 and std 1
-                    # q_std = q[b, h, i] if q[b, h, i].std() == 0 else (q[b, h, i] - q[b, h, i].mean()) / q[b, h, i].std()
-                    # k_std = k[b, h] if k[b, h].std() == 0 else (k[b, h] - k[b, h].mean()) / k[b, h].std()
-
+        for b in range(batch_size):
+            for h in range(n_heads):
+                for i in range(n_tokens):
                     q_std = q[b, h, i]
                     k_std = k[b, h]
+                    h_sq  = (o[b, h, i] ** 2).sum()
+                            
+                    log_nom = (q_std * q_std).sum() / 8
+                    exp_values = np.exp((q_std * k_std).sum(axis=-1) / 8)
+                    log_den = 2 * np.log(np.sum(exp_values))  # since den = (sum(...))²
+                    phi_sq = 0 if np.isinf(log_den) else np.exp(log_nom - log_den) 
 
-                    # Calculate output of attention
-                    o = attn_matr @ v
-
-                    # Calculate h norm squared (squared L2 norm of the output vector)
-                    # Calculate h norm squared
-                    h_ = o[b, h, i].pow(2).sum()
-
-                    # Use log-exp trick to compute phi_norm_squared = exp(log_nom - log_den)
-                    log_nom = (q_std * q_std).sum(-1) / 8
-                    log_exp_values = (q_std * k_std).sum(-1) / 8
-
-                    # Compute log(denominator) = 2 * log(sum(exp(log_exp_values)))
-                    # Use log-sum-exp for numerical stability
-                    log_den = 2 * torch.logsumexp(log_exp_values, dim=-1)
-
-                    # Final phi norm squared
-                    phi_norm_squared = torch.exp(log_nom - log_den) if torch.isfinite(log_den) else 0.0
-                    # Store results
-                    phi_norms[layer_idx, b, h, i] = phi_norm_squared
-                    h_norms[layer_idx, b, h, i] = h_
-
-    # Clean up hooks
-    for handle in hook_handles:
-        handle.remove()
+                    phi_norms[l, b, h, i] = phi_sq
+                    h_norms[l, b, h, i]   = h_sq
 
     return {
-        "model_name": model_name,
-        "phi_norms": phi_norms,
-        "h_norms": h_norms,
-        "no_layers": no_layers,
-        "num_heads": num_heads,
-        "num_tokens": num_tokens,
-        "batch_size": batch_size,
+        "model_name":  model_name,
+        "phi_norms":   phi_norms,
+        "h_norms":     h_norms,
+        "no_layers":   n_layers,
+        "num_heads":   n_heads,
+        "num_tokens":  n_tokens,
+        "batch_size":  batch_size,
     }
 
-
-# Replace the LaTeX expressions in the plot_layer_statistics function
-# Change \h_i to h_i or \mathbf{h}_i
+# ---------------------------------------------------------------------
+# 4. Plotting & statistics (identical to your original functions)
+# ---------------------------------------------------------------------
 
 
 def plot_layer_statistics(
-    model_results, use_percentiles=True, remove_outliers=True, outlier_threshold=95
-):
+    model_results, use_percentiles=True, remove_outliers=True, outlier_threshold=95):
     """
     Plot layer-wise statistics for both metrics
 
@@ -369,7 +341,7 @@ def plot_layer_statistics(
         plt.text(
             0.95,  # x-coordinate (more to the right)
             0.05,  # y-coordinate (higher up)
-            short_names.get(model_name, model_name),
+            SHORT_NAMES.get(model_name, model_name),
             fontsize=30,  # Larger font
             ha="right",  # Align text's right edge to x position
             va="bottom",  # Align text's top edge to y position
@@ -418,7 +390,9 @@ def plot_layer_statistics(
     plt.xticks(np.arange(0, no_layers, 1))  # Show every layer number
 
     plt.tight_layout()
-    plt.savefig(f"norm_outputs/{model_name}_combined_stats_log.pdf")
+    # replace "/" with "_" in model_name
+    model_name = model_name.replace("/", "_")
+    plt.savefig(f"nlp_norm_outputs/{model_name}_combined_stats_log.pdf")
     plt.show()
 
     # Return the statistics for combined plots
@@ -576,7 +550,6 @@ def compute_layer_statistics(model_results):
         },
     }
 
-
 def compute_relative_errors(model_results):
     """
     Compute relative errors between phi and h for visualization
@@ -651,7 +624,6 @@ def compute_relative_errors(model_results):
         "mean_rel_error_h": mean_rel_error_h,
     }
 
-
 def plot_relative_errors(model_errors, log_scale=True):
     """
     Plot relative errors between phi and h
@@ -696,8 +668,10 @@ def plot_relative_errors(model_errors, log_scale=True):
     plt.legend(loc="best")
 
     plt.tight_layout()
+    # replace "/" with "_" in model_name
+    model_name = model_name.replace("/", "_")
     plt.savefig(
-        f"norm_outputs/{model_name}_relative_errors{'_log' if log_scale else ''}.pdf"
+        f"nlp_norm_outputs/{model_name}_relative_errors{'_log' if log_scale else ''}.pdf"
     )
     plt.show()
 
@@ -724,55 +698,33 @@ def plot_relative_errors(model_errors, log_scale=True):
     plt.legend(loc="best")
 
     plt.tight_layout()
+    # replace "/" with "_" in model_name
+    model_name = model_name.replace("/", "_")
     plt.savefig(
-        f"norm_outputs/{model_name}_absolute_error{'_log' if log_scale else ''}.pdf"
+        f"nlp_norm_outputs/{model_name}_absolute_error{'_log' if log_scale else ''}.pdf"
     )
     plt.show()
 
 
-# Add this to the main function
+# ---------------------------------------------------------------------
+# 5. Main driver
+# ---------------------------------------------------------------------
 def main():
-    # Analyze each model and store results
-    all_model_results = []
-    all_model_stats = []
-    all_model_detailed_stats = []
-    all_model_errors = []
+    if not os.path.exists("nlp_norm_outputs"):
+        os.makedirs("nlp_norm_outputs")
 
-    # create folder "norm_outputs" if it does not exist
-    if not os.path.exists("norm_outputs"):
-        os.makedirs("norm_outputs")
-        
-    
     for model_name in SUPPORTED_MODELS:
         try:
-            # Analyze model
-            results = analyze_model(model_name)
-
-            if results is not None:
-                all_model_results.append(results)
-
-                # Generate individual model plots and get statistics
-                stats = plot_layer_statistics(
-                    results, use_percentiles=True, remove_outliers=True
-                )
-                all_model_stats.append(stats)
-
-                # Compute detailed statistics
-                detailed_stats = compute_layer_statistics(results)
-                all_model_detailed_stats.append(detailed_stats)
-
-                # Compute relative errors
-                errors = compute_relative_errors(results)
-                all_model_errors.append(errors)
-
-                # Plot relative errors
-                plot_relative_errors(errors, log_scale=True)
-
+            res = analyze_model_nlp(model_name)
+            if res is None:
+                continue
+            # Call your existing utilities
+            stats  = plot_layer_statistics(res, use_percentiles=True)
+            _      = compute_layer_statistics(res)
+            errs   = compute_relative_errors(res)
+            _      = plot_relative_errors(errs)
         except Exception as e:
-            print(f"Error analyzing model {model_name}: {e}")
-            import traceback
-            traceback.print_exc()
-
+            print(f"❌ Error with {model_name}: {e}")
 
 if __name__ == "__main__":
     main()
