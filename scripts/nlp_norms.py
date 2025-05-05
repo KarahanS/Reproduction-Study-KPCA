@@ -26,27 +26,43 @@ The encoder contains self-attention layers. In a self-attention layer all of the
 and queries come from the same place, in this case, the output of the previous layer in the
 encoder. Each position in the encoder can attend to all positions in the previous layer of the
 encoder.
+
+The simplest, safest way to avoid the masking complications of decoder‑only LLMs is to restrict your experiment to 
+encoder‑only transformers. These models (BERT, RoBERTa, ELECTRA, DistilBERT, ALBERT, DeBERTa, …) apply unmasked 
+self‑attention across the whole input, so your φ‑ and h‑norm computations remain exactly in‑sync with the model’s forward 
+pass without any extra masking logic. 
+They are also smaller than most causal decoders, which keeps GPU memory in check.
 """
 SUPPORTED_MODELS = [
-    # encoder‑only (bidirectional)
-    "bert-base-uncased",
-    "roberta-base",
-    "google/electra-base-discriminator",
-
-    # decoder‑only (causal)
-    "gpt2",
-    "distilgpt2",
-    "EleutherAI/gpt-neo-125m",
+    "bert-base-uncased",                 # 12‑layer baseline encoder
+    "roberta-base",                      # BERT + training tweaks
+    "google/electra-base-discriminator", # discriminator with replaced‑token objective
+    "google/electra-small-discriminator",                    # weight‑sharing, factorised embeddings
+    "xlm-roberta-base",
+    "allenai/longformer-base-4096",
+    "sentence-transformers/all-MiniLM-L6-v2",
+    "camembert-base",
+    "studio-ousia/luke-base",
 ]
 
 SHORT_NAMES = {
-    "bert-base-uncased":           "BERT‑Base",
-    "roberta-base":                "RoBERTa‑Base",
+    "bert-base-uncased":                 "BERT‑Base",
+    "roberta-base":                      "RoBERTa‑Base",
     "google/electra-base-discriminator": "ELECTRA‑Base",
-    "gpt2":                        "GPT‑2‑S",
-    "distilgpt2":                  "DistilGPT‑2",
-    "EleutherAI/gpt-neo-125m":     "GPT‑Neo‑125M",
+    "google/electra-small-discriminator": "ELECTRA‑Small",
+    "albert-base-v2":                    "ALBERT‑Base",
+    "xlm-roberta-base":                  "XLM‑RoBERTa",
+    "allenai/longformer-base-4096":      "Longformer",
+    "google/bigbird-roberta-base":       "BigBird",
+    "funnel-transformer/small":          "Funnel",
+    "microsoft/mpnet-base":              "MPNet",
+    "google/reformer-enwik8":            "Reformer",
+    "sentence-transformers/all-MiniLM-L6-v2": "MiniLM",
+    "camembert-base":                    "CamemBERT",
+    "studio-ousia/luke-base":            "LUKE",
 }
+
+
 
 # ---------------------------------------------------------------------
 # 2. Utilities
@@ -116,8 +132,15 @@ def analyze_model_nlp(model_name):
         if all(hasattr(module, x) for x in ("query", "key", "value")):
             print("Using query, key, value")
             q_proj, k_proj, v_proj = module.query, module.key, module.value
-            num_heads = module.num_attention_heads
-            head_dim  = module.attention_head_size
+            if hasattr(module, "num_attention_heads"):
+                # BART/OPT style
+                head_dim  = module.attention_head_size
+                num_heads = module.num_attention_heads
+            elif hasattr(module, "num_heads"):
+                # GPT‑2 style
+                head_dim  = module.head_dim
+                num_heads = module.num_heads
+         
 
             q = q_proj(hidden)
             k = k_proj(hidden)
@@ -167,8 +190,22 @@ def analyze_model_nlp(model_name):
         # -------- scaled‑dot‑product attention -----------------------------
         scale = 1.0 / math.sqrt(head_dim)
         attn_scores = torch.matmul(q, k.transpose(-2, -1)) * scale
-        attn_probs  = attn_scores.softmax(dim=-1)
-        o           = torch.matmul(attn_probs, v)
+
+        # ---------- ADD THIS ----------
+        if model.config.is_decoder and attn_scores.size(-2) == attn_scores.size(-1):
+            seq_len = attn_scores.size(-1)
+            causal_mask = torch.tril(torch.ones(seq_len, seq_len,
+                                                device=attn_scores.device))
+            attn_scores = attn_scores.masked_fill(causal_mask == 0, float("-inf"))
+        # GPT‑Neo local‑attention patch (optional):
+        if hasattr(model.config, "attention_types"):
+            # every other layer uses local window size 256
+            # implement window mask here if needed
+            pass
+        # --------------------------------
+
+        attn_probs = attn_scores.softmax(dim=-1)
+        o = torch.matmul(attn_probs, v)
 
         attention_outputs.append({
             "q":     q.detach().cpu(),
@@ -186,9 +223,6 @@ def analyze_model_nlp(model_name):
         # pick *any* module that looks like self‑attention
         if any(hasattr(mod, attr) for attr in
                ("query", "q_proj", "q_lin", "c_attn")):
-            # check if not decoder
-            if "decoder" in name:
-                continue # skip decoder modules
 
             hook_handles.append(mod.register_forward_hook(attn_hook))
     # ----------------------------------- forward pass ----------------------

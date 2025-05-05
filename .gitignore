@@ -183,3 +183,5 @@ gamma_outputs
 norm_outputs
 value_vectors_outputs
 reconstruction_outputs
+nlp_norm_outputs
+nlp_value_vectors_outputs

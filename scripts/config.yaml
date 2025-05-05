@@ -10,3 +10,8 @@ standardize: True # standardize keys and queries before the calculation to ensur
 random: True # test eigenvalues for a random matrix constructed by perturbing the original A matrix
 model: "vit_base_patch16_224" # also used by value_vectors.py
 block_idx: 2 # layer used by gamma.py
+
+# nlp
+sentences:
+  - "Multi‑head attention allows the model to jointly attend to information from different representation subspaces."
+  - "Hooks are invaluable for interpretability studies in deep learning."
