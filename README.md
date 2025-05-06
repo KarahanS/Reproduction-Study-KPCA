@@ -75,4 +75,4 @@ You can use `reconstruction_relative.py` to visualize the relative average absol
 
 ### 7) Language Models
 
-You can use `nlp_norms.py` to analyze the squared norms of the query projections and attention outputs for encoder-only language models (similar to `norms.py`). To measure the similarity metrics between the self-attention learned value vectors and KPCA-derived theoretical values, you can use `nlp_value_vectors.py`. 
+You can use `nlp_norms.py` to analyze the squared norms of the query projections and attention outputs in encoder-only language models, similar to the functionality of `norms.py`. To compute similarity metrics between the self-attention value vectors learned by the model and those derived theoretically using KPCA, use `nlp_value_vectors.py`. Our experiments were conducted on the `WikiText-103` dataset, which will be automatically downloaded by `nlp_value_vectors.py`.
