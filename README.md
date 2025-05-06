@@ -72,3 +72,7 @@ To analyze convergence between self-attention learned value vectors and KPCA-der
 You can use `reconstruction.py` to generate the reconstruction plots with train/test error and individual norm values. Results of our experiments are stored as `csv` files in the `wandb_data` folder. The script will automatically load the data from the `wandb_data` folder and plot the results.
 
 You can use `reconstruction_relative.py` to visualize the relative average absolute error (as in Appendix B). This script will also load the data from the `wandb_data` folder and plot the results, similar to the script above.
+
+### 7) Language Models
+
+You can use `nlp_norms.py` to analyze the squared norms of the query projections and attention outputs for encoder-only language models (similar to `norms.py`). To measure the similarity metrics between the self-attention learned value vectors and KPCA-derived theoretical values, you can use `nlp_value_vectors.py`. 
