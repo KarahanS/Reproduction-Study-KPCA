@@ -1,6 +1,14 @@
 # Reproduction-Study-KPCA
 Code for "A Reproduction Study: The Kernel PCA Interpretation of Self-Attention Fails Under Scrutiny". 
 
+[![arXiv](https://img.shields.io/badge/arXiv-2501.15890-B31B1B.svg)](https://arxiv.org/abs/2505.07908)
+
+This repository contains code, data, and scripts for the paper:
+
+> **A Reproduction Study: The Kernel PCA Interpretation of Self-Attention Fails Under Scrutiny**  
+> Karahan Sarıtaş, Çağatay Yıldız  
+> *arXiv preprint arXiv:2505.07908, 2025*
+
 
 ### Ideal dataset format:
 The code is designed to work with the ImageNet dataset. The dataset should be organized in the following way:
